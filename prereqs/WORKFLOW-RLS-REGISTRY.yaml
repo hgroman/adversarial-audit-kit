@@ -1,0 +1,1316 @@
+# ScraperSky Workflow RLS Registry
+# ==================================
+# The CANONICAL source of truth for RLS migration
+#
+# Purpose: Map every workflow → router → service → table for RLS enforcement
+# Created: 2025-12-10
+# Work Order: WO-TENANT-CONTEXT-CONSOLIDATION
+#
+# Usage:
+#   - AI pairing partners use this to know what files to migrate
+#   - Migration status is updated after each phase
+#   - Pre-commit hooks can validate against this registry
+#
+# Status Legend:
+#   not_started    - Has inline SET ROLE, needs with_tenant_context()
+#   verify_needed  - Needs review to determine if migration is required
+#   migrated       - Uses with_tenant_context(), not yet tested
+#   verified       - Tested in production, confirmed working
+#   not_applicable - No database interaction or uses system tables only
+#
+# =============================================================================
+# FIELD SEMANTICS (READ THIS TO AVOID AUDIT CONFUSION)
+# =============================================================================
+#
+# For ROUTERS (Context Owners):
+#   has_set_tenant_context: true  = This endpoint CALLS with_tenant_context()
+#   has_set_role: true            = This endpoint uses SET ROLE (scheduler pattern)
+#
+# For SERVICES (Context Participants):
+#   has_set_tenant_context: true  = This service PARTICIPATES in tenant context
+#                                   (receives tenant_id, operates within RLS)
+#                                   It does NOT mean the service calls with_tenant_context() itself!
+#                                   Services are called FROM routers that set context.
+#                                   See SESSION-AND-TENANT-LAW.md §RLS Context Ownership
+#
+# For SCHEDULERS/BACKGROUND TASKS (Context Owners):
+#   has_set_tenant_context: true  = This task CALLS with_tenant_context() itself
+#   has_set_role: true            = Uses SET ROLE postgres for discovery phase
+#
+# KEY INSIGHT: Routers own context. Services operate within it.
+# If auditing a service, check its CALLER (router) for with_tenant_context usage.
+#
+# HEADER TRACKING:
+#   has_rls_header: true/false  = Does this file have an RLS CONTRACT header?
+#                                 Required for all routers, services, schedulers.
+#                                 See 00_RLS-CRITICAL-PATH.md for header format.
+
+meta:
+  version: "1.3.0"
+  created: "2025-12-10"
+  last_updated: "2025-12-30"
+  last_update_notes: "Combined updates: (1) Registry Reconciliation Audit - Updated WF1/WF7/WF8 migration statuses, fixed has_set_role flags. (2) Added 11 missing files: 5 job specialists (CORE), 4 sitemap scrapers (WF5), 2 infrastructure (factories, webhook)"
+  work_order: "WO-TENANT-CONTEXT-CONSOLIDATION"
+  total_workflows: 8
+  total_routers: 21
+  total_services: 33
+  total_schedulers: 10
+  audit_notes: "2025-12-29: Comprehensive gap analysis revealed registry drift - most 'not_started' items were actually complete. All WF8 services/schedulers use with_tenant_context or run_job_loop SDK. WF7 CSV/direct routers fully migrated. WF1 services correctly follow Participant pattern."
+
+# Tables protected by RLS (11 confirmed in ADR-006)
+rls_protected_tables:
+  - places_staging
+  - local_businesses
+  - domains
+  - sitemap_files
+  - sitemap_urls
+  - pages
+  - contacts
+  - profiles
+  - jobs
+  - tenant_profiles
+  - tenants
+
+# =============================================================================
+# WORKFLOW REGISTRY
+# =============================================================================
+
+workflows:
+
+  # ---------------------------------------------------------------------------
+  # WF1: The Scout (Google Maps Discovery)
+  # ---------------------------------------------------------------------------
+  WF1:
+    name: "The Scout"
+    description: "Google Maps business discovery and staging"
+    tables_touched:
+      - places_staging
+      - jobs
+    migration_phase: 1
+    migration_status: migrated  # Phase 1 completed 2025-12-10
+
+    routers:
+      - file: src/routers/wf1_google_maps_api_router.py
+        prefix: /api/v3/localminer-discoveryscan
+        has_rls_header: true
+        notes: "Inline background task fixed - removed DEFAULT_TENANT_ID fallback, raises ValueError if missing (2025-12-11)"
+        endpoints:
+          - method: POST
+            path: /search/places
+            line: 85
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /search/status/{job_id}
+            line: 297
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /places/staging
+            line: 381
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: PUT
+            path: /places/staging/{place_id}/status
+            line: 477
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: PUT
+            path: /places/staging/batch-status
+            line: 559
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /results/{job_id}
+            line: 589
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+            notes: "Stage 3 fix - added with_tenant_context (commit 494be5e)"
+          - method: GET
+            path: /search/history
+            line: 716
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+            notes: "Stage 3 fix - added with_tenant_context (commit 494be5e)"
+
+      - file: src/routers/wf1_place_staging_router.py
+        prefix: /api/v3/places-staging
+        has_rls_header: true
+        endpoints:
+          - method: GET
+            path: /
+            line: 67
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: PUT
+            path: /status
+            line: 222
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /{discovery_job_id}
+            line: 441
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: PUT
+            path: /status/filtered
+            line: 514
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+
+    services:
+      - file: src/services/places/wf1_places_search_service.py
+        has_set_tenant_context: false  # Participant pattern - trusts router context
+        has_rls_header: true
+        migration_status: complete  # Participant pattern correct per SESSION-AND-TENANT-LAW.md §RLS Context Ownership (verified 2025-12-29)
+        tables: [places_staging, jobs]
+        notes: "Participant pattern - called by wf1_google_maps_api_router.py which sets context. Has import for background task usage."
+
+      - file: src/services/places/wf1_places_service.py
+        has_set_tenant_context: false  # Participant pattern - trusts router context
+        has_rls_header: true
+        migration_status: complete  # Participant pattern correct per SESSION-AND-TENANT-LAW.md §RLS Context Ownership (verified 2025-12-29)
+        tables: [places_staging]
+        notes: "Participant pattern - called by wf1_google_maps_api_router.py which sets context."
+
+      - file: src/services/places/wf1_places_storage_service.py
+        has_set_tenant_context: false  # Participant pattern - trusts router context
+        has_rls_header: true
+        migration_status: complete  # Participant pattern correct per SESSION-AND-TENANT-LAW.md §RLS Context Ownership (verified 2025-12-29)
+        tables: [places_staging]
+        notes: "Participant pattern - called by wf1_google_maps_api_router.py which sets context. Removed hardcoded UUID fallbacks (2025-12-11)"
+
+      - file: src/services/places/wf1_places_deep_service.py
+        has_set_tenant_context: false  # Participant pattern - trusts router context
+        has_rls_header: true
+        migration_status: complete  # Participant pattern correct per SESSION-AND-TENANT-LAW.md §RLS Context Ownership (verified 2025-12-29)
+        tables: [places_staging]
+        notes: "Participant pattern - called by wf2_deep_scan_scheduler.py which sets context."
+
+      - file: src/services/places/wf1_places_background_service.py
+        has_set_tenant_context: true  # Context Owner - background task
+        has_rls_header: true
+        migration_status: complete
+        tables: [places_staging, jobs]
+        notes: "Context Owner pattern - uses with_tenant_context (line 79). Extracted from router per Rule 5 (2025-12-14, verified 2025-12-29)"
+
+    schedulers: []  # WF1 is API-driven, no scheduler
+
+  # ---------------------------------------------------------------------------
+  # WF2: The Analyst (Deep Scanning)
+  # ---------------------------------------------------------------------------
+  WF2:
+    name: "The Analyst"
+    description: "Deep scan enrichment of discovered places"
+    tables_touched:
+      - places_staging
+    migration_phase: 1  # Grouped with WF1 since same tables
+    migration_status: migrated  # Phase 1 completed 2025-12-10
+
+    routers: []  # WF2 is scheduler-driven only
+
+    services:
+      - file: src/services/wf2_website_scan_service.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        uses_with_tenant_context: true
+        migration_status: complete
+        tables: [places_staging, domains, jobs]
+        notes: "Removed DEFAULT_TENANT_ID fallback - raises ValueError if missing (2025-12-11)"
+
+    schedulers:
+      - file: src/services/background/wf2_deep_scan_scheduler.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: migrated  # Uses with_tenant_context
+        uses_run_job_loop: false
+
+  # ---------------------------------------------------------------------------
+  # WF3: The Navigator (Local Businesses + Domain Extraction)
+  # ---------------------------------------------------------------------------
+  WF3:
+    name: "The Navigator"
+    description: "Extract domains from local businesses"
+    tables_touched:
+      - local_businesses
+      - domains
+    migration_phase: 2
+    migration_status: not_started
+
+    routers:
+      - file: src/routers/wf3_local_business_router.py
+        prefix: /api/v3/local-businesses
+        has_rls_header: true
+        endpoints:
+          - method: GET
+            path: /
+            line: 47
+            has_set_role: false
+            migration_status: complete
+          - method: PUT
+            path: /status
+            line: 163
+            has_set_role: false
+            migration_status: complete
+          - method: PUT
+            path: /status/filtered
+            line: 302
+            has_set_role: false
+            migration_status: complete
+
+      - file: src/routers/wf3_domains_csv_import_router.py
+        prefix: /api/v3/domains
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /import-csv
+            line: 29
+            has_set_role: false
+            migration_status: complete
+
+      - file: src/routers/wf3_domains_direct_submission_router.py
+        prefix: /api/v3/domains
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /direct-submit
+            line: 29
+            has_set_role: false
+            migration_status: complete
+
+    services:
+      - file: src/services/wf3_business_to_domain_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        uses_with_tenant_context: true
+        migration_status: complete
+        tables: [local_businesses, domains]
+        notes: "Removed DEFAULT_TENANT_ID fallback - raises ValueError if missing (2025-12-11)"
+
+    schedulers:
+      - file: src/services/background/wf3_domain_extraction_scheduler.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        uses_with_tenant_context: true
+        migration_status: complete
+        uses_run_job_loop: true
+
+  # ---------------------------------------------------------------------------
+  # WF4: The Surveyor (Domain → Sitemap Discovery)
+  # ---------------------------------------------------------------------------
+  WF4:
+    name: "The Surveyor"
+    description: "Discover sitemaps from domains"
+    tables_touched:
+      - domains
+      - sitemap_files
+      - jobs
+    migration_phase: 3
+    migration_status: complete
+
+    routers:
+      - file: src/routers/wf4_domain_router.py
+        prefix: /api/v3/domains
+        has_rls_header: true
+        endpoints:
+          - method: GET
+            path: /
+            line: 77
+            has_set_role: false
+            uses_with_tenant_context: true
+            migration_status: complete
+          - method: PUT
+            path: /sitemap-curation/status
+            line: 187
+            has_set_role: false
+            uses_with_tenant_context: true
+            migration_status: complete
+          - method: PUT
+            path: /sitemap-curation/status/filtered
+            line: 287
+            has_set_role: false
+            uses_with_tenant_context: true
+            migration_status: complete
+
+    services:
+      - file: src/services/wf4_domain_to_sitemap_adapter_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        uses_with_tenant_context: true
+        migration_status: complete
+        tables: [domains, sitemap_files, jobs]
+
+    schedulers:
+      - file: src/services/background/wf4_sitemap_discovery_scheduler.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        uses_with_tenant_context: false
+        migration_status: complete
+        uses_run_job_loop: false
+        notes: "Delegates RLS to adapter service"
+
+      - file: src/services/background/wf4_domain_monitor_scheduler.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        uses_with_tenant_context: false
+        migration_status: complete
+        uses_run_job_loop: false
+        notes: "System process (postgres role) - RLS bypassed for batch efficiency"
+
+  # ---------------------------------------------------------------------------
+  # WF5: The Flight Planner (Sitemap Processing)
+  # ---------------------------------------------------------------------------
+  WF5:
+    name: "The Flight Planner"
+    description: "Parse sitemaps and extract page URLs"
+    tables_touched:
+      - sitemap_files
+      - sitemap_urls
+      - pages
+      - domains
+      - jobs
+    migration_phase: 4
+    migration_status: complete  # Updated 2025-12-16: RLS fix applied (commits c1fa6e8-f524784), transaction management aligned with WF3 pattern
+
+    routers:
+      - file: src/routers/wf5_sitemap_file_router.py
+        prefix: /api/v3/sitemap-files
+        has_rls_header: true
+        endpoints:
+          - method: GET
+            path: /
+            line: 56
+            has_set_role: false
+            migration_status: complete
+          - method: PUT
+            path: /update
+            line: 109
+            has_set_role: false
+            migration_status: complete
+          - method: PUT
+            path: /filtered-update
+            line: 174
+            has_set_role: false
+            migration_status: complete
+          - method: POST
+            path: /
+            line: 298
+            has_set_role: false
+            migration_status: complete
+          - method: GET
+            path: /{id}
+            line: 358
+            has_set_role: false
+            migration_status: complete
+          - method: PUT
+            path: /{id}
+            line: 381
+            has_set_role: false
+            migration_status: complete
+          - method: DELETE
+            path: /{id}
+            line: 459
+            has_set_role: false
+            migration_status: complete
+
+      - file: src/routers/wf5_sitemap_batch_router.py
+        prefix: /api/v3/sitemap/batch
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /create
+            line: 140
+            has_set_role: false
+            migration_status: complete
+          - method: GET
+            path: /status
+            line: 201
+            has_set_role: false
+            migration_status: complete
+        migration_status: complete
+        has_set_tenant_context: true
+        has_set_role: false
+
+      - file: src/routers/wf5_sitemap_csv_import_router.py
+        prefix: /api/v3/sitemaps
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /import-csv
+            line: 39
+            has_set_role: false
+            migration_status: complete
+        migration_status: complete
+        has_set_tenant_context: true
+        has_set_role: false
+
+      - file: src/routers/wf5_sitemap_direct_submission_router.py
+        prefix: /api/v3/sitemaps
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /direct-submit
+            line: 54
+            has_set_role: false
+            migration_status: complete
+        migration_status: complete
+        has_set_tenant_context: true
+        has_set_role: false
+
+      - file: src/routers/wf5_sitemap_modernized_router.py
+        description: Standard Sitemap Processing Router (Modernized)
+        has_rls_header: true
+        has_set_role: false
+        has_set_tenant_context: true
+        migration_status: complete
+        notes: >-
+          Refactored to use with_tenant_context and fixed Phantom Record bug (moved background tasks outside transaction).
+        prefix: /api/v3/sitemap
+        endpoints:
+          - method: POST
+            path: /scan
+            line: 116
+            has_set_role: false
+            migration_status: complete
+          - method: GET
+            path: /status/{job_id}
+            line: 248
+            has_set_role: false
+            migration_status: complete
+
+    services:
+      - file: src/services/wf5_sitemap_import_service.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: not_started
+        tables: [sitemap_files, sitemap_urls]
+
+      - file: src/services/wf5_sitemap_files_service.py
+        has_set_tenant_context: false  # Audit 2025-12-14: has 0 matches for with_tenant_context usage
+        has_rls_header: true
+        migration_status: not_started
+        tables: [sitemap_files]
+
+      - file: src/services/sitemap/wf5_processing_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        uses_with_tenant_context: true
+        migration_status: complete
+        notes: "Chicken-and-Egg pattern. Removed hardcoded UUID fallback - raises ValueError if tenant_id not resolved (2025-12-11)"
+        tables: [sitemap_files, pages, jobs, domains]
+
+      # DELETED 2025-12-14: src/services/sitemap/wf5_sitemap_service.py
+      # Reason: Was a 3-line stub with no imports. Nothing in codebase used it.
+      # Real implementation is wf5_processing_service.py (29KB).
+      # See commit message for full reasoning.
+
+      # Sitemap Scraper Services (decomposed from sitemap_analyzer.py - commit b0b2f15)
+      - file: src/services/scraper/sitemap_analytic_service.py
+        has_set_tenant_context: false  # Uses verify_rls_context instead
+        has_rls_header: true
+        migration_status: complete  # Self-enforcing via verify_rls_context (3 calls)
+        tables: []  # Orchestration only, delegates to sub-services
+        notes: "Orchestrator for domain-level sitemap analysis. Created in WO-11d (b0b2f15)"
+
+      - file: src/services/scraper/sitemap_discovery_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: not_applicable  # HTTP only, no DB access
+        tables: []
+        notes: "HTTP discovery service for sitemaps. Created in WO-11d (b0b2f15)"
+
+      - file: src/services/scraper/sitemap_parser_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: not_applicable  # XML parsing only, no DB access
+        tables: []
+        notes: "XML parsing service for sitemaps. Created in WO-11d (b0b2f15)"
+
+      - file: src/services/scraper/sitemap_rule_engine.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: not_applicable  # Pure logic, no DB access
+        tables: []
+        notes: "URL classification rules. Created in WO-11d (b0b2f15)"
+
+    schedulers:
+      - file: src/services/background/wf5_sitemap_import_scheduler.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: not_started
+        uses_run_job_loop: true
+
+  # ---------------------------------------------------------------------------
+  # WF7: The Extractor (Page Scraping)
+  # ---------------------------------------------------------------------------
+  WF7:
+    name: "The Extractor"
+    description: "Scrape pages and extract contact information"
+    tables_touched:
+      - pages
+      - contacts
+      - domains
+    migration_phase: 5
+    migration_status: not_started
+
+    routers:
+      - file: src/routers/wf7_pages_router.py
+        prefix: /api/v3/pages
+        has_rls_header: true
+        endpoints:
+          - method: GET
+            path: /
+            line: 32
+            has_set_role: false
+            migration_status: complete
+          - method: PUT
+            path: /status
+            line: 102
+            has_set_role: false
+            migration_status: complete
+          - method: PUT
+            path: /status/filtered
+            line: 165
+            has_set_role: false
+            migration_status: complete
+        has_set_tenant_context: true
+        notes: "Refactored to use with_tenant_context context manager."
+
+      - file: src/routers/wf7_page_batch_scraper_router.py
+        prefix: /api/v3/pages
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /scan
+            line: 105
+            has_set_role: false
+            migration_status: complete
+          - method: GET
+            path: /status/{job_id}
+            line: 190
+            has_set_role: false
+            migration_status: complete
+          - method: POST
+            path: /batch
+            line: 290
+            has_set_role: false
+            migration_status: complete
+          - method: GET
+            path: /batch/{batch_id}/status
+            line: 391
+            has_set_role: false
+            migration_status: complete
+          - method: GET
+            path: /health
+            line: 460
+            has_set_role: false
+            migration_status: not_applicable
+        has_set_tenant_context: true
+        notes: "Refactored to use with_tenant_context context manager."
+
+      - file: src/routers/wf7_page_csv_import_router.py
+        prefix: /api/v3/pages
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /import-csv
+            line: 130
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: complete
+            notes: "Uses with_tenant_context (line 216), extracts tenant_id from JWT with fail-fast (verified 2025-12-29)"
+
+      - file: src/routers/wf7_page_direct_submission_router.py
+        prefix: /api/v3/pages
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /direct-submit
+            line: 127
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: complete
+            notes: "Uses with_tenant_context (line 112 import), extracts tenant_id from JWT (verified 2025-12-29)"
+
+      - file: src/routers/wf7_page_modernized_scraper_router.py
+        prefix: /api/v3/page-scraper
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /scan
+            line: 116
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: POST
+            path: /batch
+            line: 192
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /status/{job_id}
+            line: 248
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /batch/{batch_id}/status
+            line: 289
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+            notes: "Stage 3 fix - replaced inline SET ROLE with with_tenant_context (commit 494be5e)"
+
+    services:
+      - file: src/services/wf7_page_curation_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        uses_with_tenant_context: true
+        migration_status: complete
+        tables: [pages, contacts]
+        notes: "Removed DEFAULT_TENANT_ID fallback - raises ValueError if page has no tenant_id (2025-12-11)"
+
+      - file: src/services/page_scraper/wf7_processing_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: not_started
+        tables: [pages]
+
+      - file: src/services/page_scraper/domain_processor.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: migrated
+        tables: [pages, domains]
+        notes: "Stage 2 fix - removed DEFAULT_TENANT_ID fallbacks, uses with_tenant_context (commit 6c93651)"
+
+    schedulers:
+      - file: src/services/background/wf7_page_curation_scheduler.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: not_started
+        uses_run_job_loop: false
+
+  # ---------------------------------------------------------------------------
+  # WF8: The Connector (Contacts + CRM Integration)
+  # ---------------------------------------------------------------------------
+  WF8:
+    name: "The Connector"
+    description: "Contact validation and CRM sync"
+    tables_touched:
+      - contacts
+      - pages
+      - domains
+    migration_phase: 6
+    migration_status: migrated
+    notes: "Stage 5 fix - all 12 router endpoints migrated to with_tenant_context (commit 53bbdaa)"
+
+    routers:
+      - file: src/routers/wf8_contacts_router.py
+        prefix: /api/v3/contacts
+        has_rls_header: true
+        has_set_role: false
+        has_set_tenant_context: true
+        migration_status: migrated
+        notes: "Stage 5 fix - 8 endpoints migrated to with_tenant_context (commit 53bbdaa)"
+        endpoints:
+          - method: POST
+            path: /
+            line: 43
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /{contact_id}
+            line: 63
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: PUT
+            path: /{contact_id}
+            line: 83
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: DELETE
+            path: /{contact_id}
+            line: 112
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /
+            line: 134
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: PUT
+            path: /status
+            line: 198
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: PUT
+            path: /status/filtered
+            line: 233
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: PUT
+            path: /crm/select
+            line: 296
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+
+      - file: src/routers/wf8_contacts_validation_router.py
+        prefix: /api/v3/contacts/validation
+        has_rls_header: true
+        has_set_role: false
+        has_set_tenant_context: true
+        migration_status: migrated
+        notes: "Stage 5 fix - 4 endpoints migrated to with_tenant_context (commit 53bbdaa)"
+        endpoints:
+          - method: POST
+            path: /validate
+            line: 45
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: POST
+            path: /validate/all
+            line: 110
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /validation-status
+            line: 171
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /validation-summary
+            line: 270
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+
+      - file: src/routers/wf8_email_scanner_router.py
+        prefix: /api/v3/email-scanner
+        has_rls_header: true
+        endpoints:
+          - method: GET
+            path: /scan/status/{job_id}
+            line: 54
+            has_set_role: true
+            migration_status: not_started
+
+      - file: src/routers/wf8_n8n_webhook_router.py
+        prefix: /api/v3/n8n/webhook
+        has_rls_header: true
+        endpoints:
+          - method: POST
+            path: /
+            line: 167
+            has_set_role: true
+            migration_status: not_started
+            notes: "Uses default tenant for webhooks"
+          - method: GET
+            path: /health
+            line: 275
+            has_set_role: false
+            migration_status: not_applicable
+
+    services:
+      - file: src/services/crm/wf8_hubspot_sync_service.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: complete
+        tables: [contacts]
+        notes: "Participant pattern - imports with_tenant_context (line 127), called by scheduler (verified 2025-12-29)"
+
+      - file: src/services/crm/wf8_brevo_sync_service.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: complete
+        tables: [contacts]
+        notes: "Participant pattern - uses with_tenant_context (4 matches), called by scheduler (verified 2025-12-29)"
+
+      - file: src/services/crm/wf8_n8n_sync_service.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: complete
+        tables: [contacts]
+        notes: "Participant pattern - uses with_tenant_context (4 matches), called by scheduler (verified 2025-12-29)"
+
+      - file: src/services/crm/wf8_n8n_enrichment_service.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: complete
+        tables: [contacts]
+        notes: "Participant pattern - uses with_tenant_context, called by webhook router (verified 2025-12-29)"
+
+      - file: src/services/email_validation/wf8_debounce_service.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: complete
+        tables: [contacts]
+        notes: "Participant pattern - uses with_tenant_context, called by scheduler (verified 2025-12-29)"
+
+      - file: src/services/email_validation/wf8_validation_api_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: complete
+        tables: [contacts]
+        notes: "Participant pattern - trusts caller context, external API wrapper (verified 2025-12-29)"
+
+    schedulers:
+      - file: src/services/background/wf8_crm_hubspot_sync_scheduler.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: complete
+        uses_run_job_loop: true
+        notes: "Uses run_job_loop SDK (line 63) - RLS context handled by SDK Two-Phase pattern (verified 2025-12-29)"
+
+      - file: src/services/background/wf8_crm_brevo_sync_scheduler.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: complete
+        uses_run_job_loop: true
+        notes: "Uses run_job_loop SDK - RLS context handled by SDK Two-Phase pattern (verified 2025-12-29)"
+
+      - file: src/services/background/wf8_crm_n8n_sync_scheduler.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: complete
+        uses_run_job_loop: true
+        notes: "Uses run_job_loop SDK - RLS context handled by SDK Two-Phase pattern (verified 2025-12-29)"
+
+      - file: src/services/background/wf8_crm_debounce_scheduler.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: complete
+        uses_run_job_loop: true
+        notes: "Uses run_job_loop SDK - RLS context handled by SDK Two-Phase pattern (verified 2025-12-29)"
+
+  # ---------------------------------------------------------------------------
+  # WF9: The Librarian (AI Copilot)
+  # ---------------------------------------------------------------------------
+  WF9:
+    name: "The Librarian"
+    description: "AI-powered documentation and semantic search"
+    tables_touched:
+      - jobs  # If it tracks copilot queries
+    migration_phase: 7
+    migration_status: migrated
+    notes: "Stage 5 fix - all 3 router endpoints migrated to with_tenant_context (commit 53bbdaa)"
+
+    routers:
+      - file: src/routers/wf9_copilot_router.py
+        prefix: /api/v3/copilot
+        has_rls_header: true
+        has_set_role: false
+        has_set_tenant_context: true
+        migration_status: migrated
+        notes: "Stage 5 fix - 3 endpoints migrated to with_tenant_context (commit 53bbdaa)"
+        endpoints:
+          - method: POST
+            path: /ask
+            line: 155
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /stats
+            line: 293
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+          - method: GET
+            path: /filters
+            line: 382
+            has_set_role: false
+            has_set_tenant_context: true
+            migration_status: migrated
+
+    services: []  # Copilot logic is in router
+
+    schedulers: []
+
+  # ---------------------------------------------------------------------------
+  # Core Infrastructure (Non-Workflow)
+  # ---------------------------------------------------------------------------
+  CORE:
+    name: "Core Infrastructure"
+    description: "Profile management, job service, and utilities"
+    tables_touched:
+      - profiles
+      - jobs
+      - tenants
+    migration_phase: 7
+    migration_status: not_started
+
+    routers:
+      - file: src/routers/profile.py
+        prefix: /api/v3/profiles
+        has_rls_header: true
+        endpoints:
+          - method: GET
+            path: /
+            line: 32
+            has_set_role: true
+            migration_status: not_started
+          - method: GET
+            path: /{profile_id}
+            line: 72
+            has_set_role: true
+            migration_status: not_started
+          - method: POST
+            path: /
+            line: 108
+            has_set_role: true
+            migration_status: not_started
+          - method: PUT
+            path: /{profile_id}
+            line: 147
+            has_set_role: true
+            migration_status: not_started
+          - method: DELETE
+            path: /{profile_id}
+            line: 188
+            has_set_role: true
+            migration_status: not_started
+
+      - file: src/routers/db_portal.py
+        prefix: /api/v3/db
+        has_rls_header: true
+        migration_status: not_applicable
+        notes: "Queries system tables only (information_schema)"
+
+      - file: src/routers/admin_user_tenant_router.py
+        prefix: /api/v3/admin
+        has_rls_header: true
+        has_set_tenant_context: false
+        migration_status: complete
+        tables: [user_tenants, profiles, tenants, roles]
+        notes: "Phase 1 MVP - User-Tenant Assignment API (WO-USER-TENANT-MANAGEMENT-API, 2025-12-14). Admin endpoints for managing user_tenants table. No RLS context needed - queries across tenants for admin purposes."
+        endpoints:
+          - method: GET
+            path: /user-tenants
+            line: 89
+            description: "List all user-tenant assignments"
+          - method: GET
+            path: /users-without-tenants
+            line: 161
+            description: "Find orphaned users without tenant assignment"
+          - method: POST
+            path: /user-tenants
+            line: 217
+            description: "Assign user to tenant"
+          - method: DELETE
+            path: /user-tenants/{user_id}/{tenant_id}
+            line: 280
+            description: "Remove user-tenant assignment"
+          - method: GET
+            path: /tenants-list
+            line: 323
+            description: "List tenants for dropdown"
+          - method: GET
+            path: /roles-list
+            line: 354
+            description: "List roles for dropdown"
+
+      - file: src/routers/dashboard_stats_router.py
+        prefix: /api/v3/stats
+        has_rls_header: true
+        has_set_tenant_context: true
+        migration_status: complete
+        tables: [places_staging, local_businesses, place_searches, domains, sitemap_files, sitemap_urls, pages, contacts, jobs, batch_jobs]
+        notes: "Dashboard statistics endpoint (WO-DASHBOARD-STATS-ENDPOINT, 2025-12-15). Returns aggregated counts per tenant using RLS."
+        endpoints:
+          - method: GET
+            path: /dashboard
+            line: 33
+            description: "Get aggregated dashboard statistics grouped by tool category"
+
+    services:
+      - file: src/services/profile_service.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: not_started
+        tables: [profiles]
+
+      - file: src/services/job_service.py
+        has_set_tenant_context: true
+        has_rls_header: true
+        migration_status: migrated
+        tables: [jobs]
+        notes: "Stage 4 fix - tenant_id now REQUIRED in all 17 methods, removed all DEFAULT_TENANT_ID fallbacks (commits 9fdb6ed, 5ab5618)"
+
+      # Job Specialist Services (decomposed from job_service.py - commit b5dab40)
+      - file: src/services/batch_job_service.py
+        has_set_tenant_context: false  # Uses verify_rls_context instead
+        has_rls_header: true
+        migration_status: complete  # Self-enforcing via verify_rls_context (5 calls)
+        tables: [jobs, batch_jobs]
+        notes: "Specialist for batch lifecycle. Created in Admin Router De-Godification (4801afa)"
+
+      - file: src/services/job_creation_service.py
+        has_set_tenant_context: false  # Uses verify_rls_context instead
+        has_rls_header: true
+        migration_status: complete  # Self-enforcing via verify_rls_context (3 calls)
+        tables: [jobs]
+        notes: "Specialist for job initialization. Created in Admin Router De-Godification (4801afa)"
+
+      - file: src/services/job_retrieval_service.py
+        has_set_tenant_context: false  # Uses verify_rls_context instead
+        has_rls_header: true
+        migration_status: complete  # Self-enforcing via verify_rls_context (8 calls)
+        tables: [jobs, batch_jobs]
+        notes: "Specialist for job lookups. Created in Admin Router De-Godification (4801afa)"
+
+      - file: src/services/job_status_service.py
+        has_set_tenant_context: false  # Uses verify_rls_context instead
+        has_rls_header: true
+        migration_status: complete  # Self-enforcing via verify_rls_context (3 calls)
+        tables: [jobs]
+        notes: "Specialist for job status updates. Created in Admin Router De-Godification (4801afa)"
+
+      - file: src/services/core/selector_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: verify_needed  # No verify_rls_context, needs audit
+        tables: [workflow_methods]
+        notes: "Universal Workflow Selector - resolves active processing method per tenant"
+
+      - file: src/services/core/user_context_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: not_started
+        tables: [tenants]
+
+      - file: src/services/core/validation_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: not_applicable
+        tables: []
+
+    schedulers: []
+
+# ---------------------------------------------------------------------------
+  # INFRASTRUCTURE: Core Infrastructure Files (Non-Workflow)
+  # ---------------------------------------------------------------------------
+  INFRASTRUCTURE:
+    name: "Infrastructure & Cleanup"
+    description: "Core infrastructure files with deprecated patterns"
+    tables_touched: []
+    migration_phase: 8
+    migration_status: not_started
+    notes: "These files use deprecated session patterns but aren't workflow-specific"
+
+    core_files:
+      - file: src/common/curation_sdk/scheduler_loop.py
+        has_rls_header: true
+        issue: get_background_session
+        migration_status: not_started
+
+      - file: src/db/session.py
+        has_rls_header: true
+        issue: "Context manager + .begin() conflict"
+        migration_status: not_started
+        notes: "Core session factory - requires careful migration"
+
+      - file: src/main.py
+        has_rls_header: true
+        issue: "Wrong get_session import (line 88)"
+        migration_status: not_started
+        notes: "Application entry point"
+
+      - file: src/services/batch/batch_functions.py
+        has_rls_header: true
+        issue: get_background_session
+        migration_status: not_started
+        notes: "Shared batch processing utilities"
+
+      - file: src/services/batch/batch_processor_service.py
+        has_rls_header: true
+        migration_status: not_started
+        notes: "Batch processing service - discovered 2025-12-14"
+
+      - file: src/services/batch/types.py
+        has_rls_header: true
+        migration_status: not_applicable
+        notes: "Type definitions only - no DB access"
+
+      - file: src/services/db_inspector.py
+        has_rls_header: true
+        migration_status: not_applicable
+        notes: "Database inspection utility - system tables only"
+
+      - file: src/services/database_health_monitor.py
+        has_rls_header: true
+        issue: get_background_session
+        migration_status: not_started
+        notes: "Health monitoring service"
+
+      - file: src/tasks/email_scraper.py
+        has_rls_header: true
+        issue: get_background_session
+        migration_status: not_started
+        notes: "Background email scraping task"
+
+      - file: src/db/session.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: complete
+        notes: "Canonical Session Provider (Auto-Commit)"
+
+      - file: src/db/docker_connector.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: complete
+        notes: "Docker Session Mode (5432) Infrastructure"
+
+      - file: src/services/factories.py
+        has_rls_header: true
+        migration_status: not_applicable  # Factory pattern only, no DB access
+        notes: "Service factory singleton provider. Created in Admin Router De-Godification (4801afa)"
+
+      - file: src/services/core/webhook_service.py
+        has_rls_header: true
+        migration_status: not_applicable  # HTTP only, no DB access
+        notes: "Universal webhook client for n8n/external services"
+
+  # ---------------------------------------------------------------------------
+  # WF10: The Strategist (Enrichment + Signal Platform)
+  # ---------------------------------------------------------------------------
+  WF10:
+    name: "The Strategist"
+    description: "Multi-entity signal gathering and deep extraction"
+    tables_touched:
+      - sitemap_signals
+      - workflow_methods
+      - documents
+    migration_phase: 10
+    migration_status: migrated
+
+    routers:
+      - file: src/routers/wf10_signal_router.py
+        prefix: /api/v3/signals
+        has_rls_header: true
+        has_set_tenant_context: true
+        migration_status: complete
+        notes: "Unified Signal Platform core router. Implements Action Table pattern."
+      
+      - file: src/routers/wf10_documents_router.py
+        prefix: /api/v3/documents
+        has_rls_header: true
+        has_set_tenant_context: true
+        migration_status: complete
+
+      - file: src/routers/wf10_workflow_methods_router.py
+        prefix: /api/v3/workflow-methods
+        has_rls_header: true
+        has_set_tenant_context: true
+        migration_status: complete
+
+    services:
+      - file: src/services/wf10_signal_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: complete
+        tables: [sitemap_signals, workflow_methods]
+        notes: "Participant pattern - trusts router context."
+
+      - file: src/services/wf10_documents_service.py
+        has_set_tenant_context: false
+        has_rls_header: true
+        migration_status: complete
+        tables: [documents]
+
+    schedulers: []
+
+# =============================================================================
+# MIGRATION PHASE MAPPING
+# =============================================================================
+# Maps migration phases to the work order phases
+
+phase_mapping:
+  1:
+    name: "WF1 + WF2 (Places)"
+    workflows: [WF1, WF2]
+    estimated_files: 7
+    git_tag: phase-1-wf1-complete
+
+  2:
+    name: "WF3 (Local Businesses)"
+    workflows: [WF3]
+    estimated_files: 5
+    git_tag: phase-2-wf3-complete
+
+  3:
+    name: "WF4 (Domains)"
+    workflows: [WF4]
+    estimated_files: 4
+    git_tag: phase-3-wf4-complete
+
+  4:
+    name: "WF5 (Sitemaps)"
+    workflows: [WF5]
+    estimated_files: 10
+    git_tag: phase-4-wf5-complete
+
+  5:
+    name: "WF7 (Pages)"
+    workflows: [WF7]
+    estimated_files: 8
+    git_tag: phase-5-wf7-complete
+
+  6:
+    name: "WF8 (Contacts)"
+    workflows: [WF8]
+    estimated_files: 14
+    git_tag: phase-6-wf8-complete
+
+  7:
+    name: "WF9 + Core"
+    workflows: [WF9, CORE]
+    estimated_files: 7
+    git_tag: phase-7-core-complete
+
+  8:
+    name: "Cleanup & Enforcement"
+    workflows: []
+    estimated_files: 0
+    git_tag: phase-8-migration-complete
+    actions:
+      - "Remove deprecated session factories"
+      - "Enable blocking pre-commit hooks"
+      - "Run full enforcement test suite"
+      - "Update all documentation"
+
+# =============================================================================
+# SUMMARY STATISTICS
+# =============================================================================
+
+summary:
+  total_endpoints: 65
+  endpoints_with_set_role: 63
+  endpoints_not_applicable: 2
+  total_services: 24
+  services_with_tenant_context: 14
+  services_without_tenant_context: 10
+  total_schedulers: 10
+  schedulers_with_run_job_loop: 1
