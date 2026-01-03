@@ -84,10 +84,10 @@ Copy the compliance test orchestrator AND the generator persona INTO the audit d
 
 ```bash
 # Copy the Phase 2 Orchestrator (The Trigger)
-cp compliance-test-orchestrator.md "$AUDIT_DIR/"
+cp tools/compliance-test-orchestrator.md "$AUDIT_DIR/"
 
 # Copy the Compliance Agent Persona (The Brain)
-cp agents/compliance-test-generator-v2.md "$AUDIT_DIR/"
+cp .claude/agents/compliance-test-generator-v2.md "$AUDIT_DIR/"
 ```
 
 After this, the structure is:
@@ -106,12 +106,6 @@ After this, the structure is:
     ├── TEST-findings.md
     └── VERDICT.md
 ```
-
-**WORKFLOW:**
-1. Phase 1 (now): Adversarial audit produces findings
-2. Developer implements fixes based on VERDICT.md
-3. Phase 2 (later): Drag `compliance-test-orchestrator.md` FROM this folder
-4. It reads findings from same folder, generates compliance tests
 
 ### Step 1.4: Initialize Status File
 Write `_STATUS.yaml`:
