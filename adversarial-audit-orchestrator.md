@@ -78,15 +78,16 @@ The work order is MOVED (not copied) into the audit directory. This keeps everyt
 mv "$WORK_ORDER" "$AUDIT_DIR/"
 ```
 
-### Step 1.3: Copy Compliance Test Orchestrator
+### Step 1.3: Copy Compliance Test Assets
 
-Copy the compliance test orchestrator INTO the audit directory. After the audit completes and implementation is done, the user can drag this file directly into chat to generate compliance tests.
+Copy the compliance test orchestrator AND the generator persona INTO the audit directory. After the audit completes and implementation is done, the user can drag the orchestrator file directly into chat to generate compliance tests using the V2 adversarial persona.
 
 ```bash
-# Path depends on your setup:
-# - Standalone kit: cp compliance-test-orchestrator.md "$AUDIT_DIR/"
-# - Integrated repo: cp tools/compliance-test-orchestrator.md "$AUDIT_DIR/"
+# Copy the Phase 2 Orchestrator (The Trigger)
 cp compliance-test-orchestrator.md "$AUDIT_DIR/"
+
+# Copy the Compliance Agent Persona (The Brain)
+cp agents/compliance-test-generator-v2.md "$AUDIT_DIR/"
 ```
 
 After this, the structure is:
@@ -94,15 +95,11 @@ After this, the structure is:
 05_Active_Work/
 └── 10-REFACTOR-DEPENDENCY-INJECTION-Audit/
     ├── 10-REFACTOR-DEPENDENCY-INJECTION.md  ← work order (moved here)
-    ├── compliance-test-orchestrator.md      ← for Phase 2 (test generation)
+    ├── compliance-test-orchestrator.md      ← for Phase 2 (the trigger)
+    ├── compliance-test-generator-v2.md      ← for Phase 2 (the brain)
     ├── _STATUS.yaml
     ├── ARCH-findings.md
-    ├── DEVOPS-findings.md
-    ├── SEC-findings.md
-    ├── KRAKEN-findings.md
-    ├── OPS-findings.md
-    ├── TEST-findings.md
-    └── VERDICT.md
+    ...
 ```
 
 **WORKFLOW:**
