@@ -6,18 +6,26 @@ A multi-agent adversarial code review system that finds what humans miss.
 
 ## What This Is
 
-The Adversarial Audit Kit deploys **6 specialized AI auditors** in parallel to stress-test work orders before implementation. Each auditor brings a different adversarial lens:
+The Adversarial Audit Kit is a **two-phase system**:
 
-| Auditor | Codename | Hunts For |
-|---------|----------|-----------|
-| **Architect** | Structure Breaker | Circular imports, layer violations, dead code, god files |
-| **DevOps** | Build Saboteur | Missing dependencies, broken Docker builds, unregistered routers |
-| **Data Assassin** | Security Predator | RLS bypasses, tenant leaks, role mismanagement |
-| **Kraken** | Concurrency Crusher | Connection pool exhaustion, blocking I/O, race conditions |
-| **Operator** | 2AM Nightmare | Missing logs, silent failures, unobservable errors |
-| **Test Sentinel** | Coverage Hunter | Missing test categories, untestable code, fixture gaps |
+- **Phase 1**: Deploy **6 specialized AI auditors** in parallel to stress-test work orders before implementation
+- **Phase 2**: Transform findings into **executable compliance tests** that prevent regression forever
 
-Each auditor reads the same prerequisite documents (the architectural "law"), then attacks the work order from their specialty. Findings are classified as **BLOCKER**, **WARNING**, or **ADVISORY**.
+### The 7 Agents
+
+| Agent | Codename | Phase | Purpose |
+|-------|----------|-------|---------|
+| **Architect** | Structure Breaker | 1 | Circular imports, layer violations, dead code, god files |
+| **DevOps** | Build Saboteur | 1 | Missing dependencies, broken Docker builds, unregistered routers |
+| **Data Assassin** | Security Predator | 1 | RLS bypasses, tenant leaks, role mismanagement |
+| **Kraken** | Concurrency Crusher | 1 | Connection pool exhaustion, blocking I/O, race conditions |
+| **Operator** | 2AM Nightmare | 1 | Missing logs, silent failures, unobservable errors |
+| **Test Sentinel** | Coverage Hunter | 1 | Missing test categories, untestable code, fixture gaps |
+| **Compliance Test Generator** | Truth Encoder | 2 | Transforms findings into pytest tests |
+
+**Phase 1** auditors read prerequisite documents (the architectural "law"), then attack the work order from their specialty. Findings are classified as **BLOCKER**, **WARNING**, or **ADVISORY**.
+
+**Phase 2** takes those findings and generates executable tests. *A finding is an opinion. A passing test is a fact.*
 
 ---
 
@@ -42,7 +50,9 @@ The kit found that the work order assumed a `companies` table that didn't exist,
 
 ## Quick Start (5 Minutes)
 
-### Step 1: Drag and Drop
+### Phase 1: Adversarial Audit
+
+**Step 1: Start the Audit**
 
 Drag `adversarial-audit-orchestrator.md` into your Claude Code chat, then provide the work order path:
 
@@ -50,30 +60,58 @@ Drag `adversarial-audit-orchestrator.md` into your Claude Code chat, then provid
 Audit: 00_Current_Architecture/05_Active_Work/WO-MY-FEATURE.md
 ```
 
-### Step 2: Wait
+**Step 2: Wait for 6 Auditors**
 
 The orchestrator:
 1. Creates `WO-MY-FEATURE-Audit/` directory
 2. Spawns 6 auditors in parallel
 3. Monitors completion
-4. Produces `VERDICT.md` with deployment recommendation
+4. Copies `compliance-test-orchestrator.md` into the audit folder
+5. Produces `VERDICT.md` with deployment recommendation
 
-### Step 3: Review Verdict
+**Step 3: Review Verdict**
 
 ```
-Adversarial-Audit-Kit/
-  audits/
-    WO-MY-FEATURE-Audit/
-      WO-MY-FEATURE.md      # Your work order (moved here)
-      _STATUS.yaml          # Audit progress
-      ARCH-findings.md      # Architect findings
-      DEVOPS-findings.md    # DevOps findings
-      SEC-findings.md       # Security findings
-      KRAKEN-findings.md    # Concurrency findings
-      OPS-findings.md       # Observability findings
-      TEST-findings.md      # Test coverage findings
-      VERDICT.md            # Final recommendation
+WO-MY-FEATURE-Audit/
+  WO-MY-FEATURE.md                 # Your work order (moved here)
+  compliance-test-orchestrator.md  # For Phase 2 (drag later)
+  _STATUS.yaml                     # Audit progress
+  ARCH-findings.md                 # Architect findings
+  DEVOPS-findings.md               # DevOps findings
+  SEC-findings.md                  # Security findings
+  KRAKEN-findings.md               # Concurrency findings
+  OPS-findings.md                  # Observability findings
+  TEST-findings.md                 # Test coverage findings
+  VERDICT.md                       # Final recommendation
 ```
+
+### Phase 2: Compliance Tests (After Implementation)
+
+**Step 4: Implement Fixes**
+
+Address the BLOCKER findings from Phase 1, implement the work order.
+
+**Step 5: Generate Compliance Tests**
+
+Drag `compliance-test-orchestrator.md` **from the audit folder** into chat:
+
+```
+Generate compliance tests
+```
+
+The 7th agent reads all findings and produces:
+
+```
+tests/compliance/test_wf10_phase34_compliance.py
+```
+
+**Step 6: Run Tests Forever**
+
+```bash
+pytest tests/compliance/ -v
+```
+
+Add to CI - these tests prevent regression permanently.
 
 ---
 
@@ -97,7 +135,9 @@ Adversarial-Audit-Kit/
 
 ---
 
-## The 6 Auditors
+## The 7 Agents
+
+### Phase 1 Auditors (1-6)
 
 ### 1. Architect (audit-01-architect)
 
@@ -195,6 +235,32 @@ Adversarial-Audit-Kit/
 
 ---
 
+### Phase 2 Agent
+
+### 7. Compliance Test Generator (compliance-test-generator)
+
+**Mindset**: "A finding is an opinion. A passing test is a fact."
+
+**Purpose**: Transforms Phase 1 findings into executable pytest tests that:
+- Encode each finding as a test
+- Cite the architectural law being verified
+- Detect violation patterns automatically
+- Run in CI forever, preventing regression
+
+**Generates tests for**:
+- ARCH-* → `TestArchitecturalCompliance` (imports, layers, naming)
+- SEC-* → `TestSecurityCompliance` (RLS, tenant isolation, roles)
+- DEVOPS-* → `TestBuildCompliance` (dependencies, registration)
+- KRAKEN-* → `TestConcurrencyCompliance` (connection pools, blocking I/O)
+- OPS-* → `TestObservabilityCompliance` (logging, error handling)
+- TEST-* → `TestCoverageCompliance` (test counts, fixtures)
+
+**Key question**: "How do we prove it stays fixed?"
+
+**Invocation**: Drag `compliance-test-orchestrator.md` from audit folder after implementation.
+
+---
+
 ## How Agents Work
 
 ### Mandatory Reading
@@ -247,14 +313,16 @@ Every finding includes:
 ```
 Adversarial-Audit-Kit/
 ├── README.md                           # This file
-├── adversarial-audit-orchestrator.md   # Main orchestrator (drag into chat)
-├── agents/                             # The 6 auditor personas
-│   ├── audit-01-architect.md
-│   ├── audit-02-devops.md
-│   ├── audit-03-data-assassin.md
-│   ├── audit-04-kraken.md
-│   ├── audit-05-operator.md
-│   └── audit-06-test-sentinel.md
+├── adversarial-audit-orchestrator.md   # Phase 1 orchestrator (drag into chat)
+├── compliance-test-orchestrator.md     # Phase 2 orchestrator (copied to audit folders)
+├── agents/                             # The 7 agent personas
+│   ├── audit-01-architect.md           # Phase 1: Structure
+│   ├── audit-02-devops.md              # Phase 1: Build/Deploy
+│   ├── audit-03-data-assassin.md       # Phase 1: Security
+│   ├── audit-04-kraken.md              # Phase 1: Concurrency
+│   ├── audit-05-operator.md            # Phase 1: Observability
+│   ├── audit-06-test-sentinel.md       # Phase 1: Coverage
+│   └── compliance-test-generator.md    # Phase 2: Test Generation
 ├── prereqs/                            # Required reading for all auditors
 │   ├── 00_MANDATORY-PREREQS.md         # Reading list
 │   ├── SESSION-AND-TENANT-LAW.md       # RLS canonical law
@@ -264,6 +332,7 @@ Adversarial-Audit-Kit/
 ├── audits/                             # Completed audit outputs
 │   └── WO-XXX-Audit/                   # One directory per work order
 │       ├── WO-XXX.md                   # Work order (moved here)
+│       ├── compliance-test-orchestrator.md  # Drag this for Phase 2
 │       ├── _STATUS.yaml                # Progress tracking
 │       ├── *-findings.md               # 6 findings files
 │       └── VERDICT.md                  # Final recommendation
@@ -393,6 +462,7 @@ Our first full audit cycle (2026-01-02) found:
 |---------|------|---------|
 | 1.0 | 2026-01-01 | Initial release with 6 auditors |
 | 1.0.1 | 2026-01-02 | First production audit (WO-WF10-PHASE3.4), fixed SEC-002 |
+| 2.0 | 2026-01-02 | Added Phase 2: Compliance Test Generator (7th agent) |
 
 ---
 

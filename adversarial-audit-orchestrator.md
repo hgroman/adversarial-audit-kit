@@ -78,11 +78,23 @@ The work order is MOVED (not copied) into the audit directory. This keeps everyt
 mv "$WORK_ORDER" "$AUDIT_DIR/"
 ```
 
+### Step 1.3: Copy Compliance Test Orchestrator
+
+Copy the compliance test orchestrator INTO the audit directory. After the audit completes and implementation is done, the user can drag this file directly into chat to generate compliance tests.
+
+```bash
+# Path depends on your setup:
+# - Standalone kit: cp compliance-test-orchestrator.md "$AUDIT_DIR/"
+# - Integrated repo: cp tools/compliance-test-orchestrator.md "$AUDIT_DIR/"
+cp compliance-test-orchestrator.md "$AUDIT_DIR/"
+```
+
 After this, the structure is:
 ```
 05_Active_Work/
 └── 10-REFACTOR-DEPENDENCY-INJECTION-Audit/
     ├── 10-REFACTOR-DEPENDENCY-INJECTION.md  ← work order (moved here)
+    ├── compliance-test-orchestrator.md      ← for Phase 2 (test generation)
     ├── _STATUS.yaml
     ├── ARCH-findings.md
     ├── DEVOPS-findings.md
@@ -93,7 +105,13 @@ After this, the structure is:
     └── VERDICT.md
 ```
 
-### Step 1.3: Initialize Status File
+**WORKFLOW:**
+1. Phase 1 (now): Adversarial audit produces findings
+2. Developer implements fixes based on VERDICT.md
+3. Phase 2 (later): Drag `compliance-test-orchestrator.md` FROM this folder
+4. It reads findings from same folder, generates compliance tests
+
+### Step 1.4: Initialize Status File
 Write `_STATUS.yaml`:
 ```yaml
 work_order: [filename]

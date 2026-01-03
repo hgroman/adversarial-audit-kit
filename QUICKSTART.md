@@ -1,6 +1,6 @@
 # Quickstart: Your First Adversarial Audit
 
-Get from zero to audit results in 5 minutes.
+Get from zero to audit results in 5 minutes. Generate compliance tests in 2 more.
 
 ---
 
@@ -79,18 +79,51 @@ ls 00_Current_Architecture/05_Active_Work/WO-YOUR-FEATURE-Audit/
 
 You'll see:
 ```
-WO-YOUR-FEATURE.md      # Your work order (moved here)
-_STATUS.yaml            # Audit status
-ARCH-findings.md        # Architect findings
-DEVOPS-findings.md      # DevOps findings
-SEC-findings.md         # Security findings
-KRAKEN-findings.md      # Concurrency findings
-OPS-findings.md         # Observability findings
-TEST-findings.md        # Test coverage findings
-VERDICT.md              # THE FINAL WORD
+WO-YOUR-FEATURE.md                 # Your work order (moved here)
+compliance-test-orchestrator.md    # For Phase 2 (drag after implementation)
+_STATUS.yaml                       # Audit status
+ARCH-findings.md                   # Architect findings
+DEVOPS-findings.md                 # DevOps findings
+SEC-findings.md                    # Security findings
+KRAKEN-findings.md                 # Concurrency findings
+OPS-findings.md                    # Observability findings
+TEST-findings.md                   # Test coverage findings
+VERDICT.md                         # THE FINAL WORD
 ```
 
 **Start with `VERDICT.md`** - it aggregates all findings and gives you the deployment recommendation.
+
+---
+
+## Phase 2: Generate Compliance Tests
+
+*After you've implemented the fixes...*
+
+### Step 5: Generate Tests
+
+Drag `compliance-test-orchestrator.md` **from the audit folder** into chat:
+
+```
+Generate compliance tests
+```
+
+The 7th agent (Compliance Test Generator) reads all findings and produces a pytest file.
+
+### Step 6: Run Tests
+
+```bash
+pytest tests/compliance/test_your_feature_compliance.py -v
+```
+
+### Step 7: Add to CI
+
+```yaml
+# .github/workflows/compliance.yml
+- name: Compliance Tests
+  run: pytest tests/compliance/ -v --tb=short
+```
+
+These tests run forever, preventing the same violations from returning.
 
 ---
 
@@ -140,6 +173,7 @@ Revise the work order and re-audit.
 | Understand all findings | Read individual `*-findings.md` files |
 | Fix issues | Address items in order of severity (BLOCKER > WARNING > ADVISORY) |
 | Re-audit after fixes | Run the audit again on the revised work order |
+| Generate compliance tests | Drag `compliance-test-orchestrator.md` from audit folder (Phase 2) |
 | Learn more | Read the full [README.md](README.md) |
 | Troubleshoot | See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
 

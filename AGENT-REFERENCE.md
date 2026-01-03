@@ -1,10 +1,12 @@
 # Agent Reference Card
 
-Quick reference for all 6 adversarial auditors.
+Quick reference for all 7 agents (6 auditors + 1 test generator).
 
 ---
 
 ## At a Glance
+
+### Phase 1: Auditors
 
 | Agent | Code | Output File | Key Question |
 |-------|------|-------------|--------------|
@@ -14,6 +16,12 @@ Quick reference for all 6 adversarial auditors.
 | Kraken | `audit-04-kraken` | KRAKEN-findings.md | "What breaks at 100 users?" |
 | Operator | `audit-05-operator` | OPS-findings.md | "Can I debug this at 2 AM?" |
 | Test Sentinel | `audit-06-test-sentinel` | TEST-findings.md | "How do we know it works?" |
+
+### Phase 2: Test Generator
+
+| Agent | Code | Output File | Key Question |
+|-------|------|-------------|--------------|
+| Compliance Test Generator | `compliance-test-generator` | test_*_compliance.py | "How do we prove it stays fixed?" |
 
 ---
 
@@ -334,7 +342,95 @@ To modify an agent's focus:
 
 To add a new agent:
 
-1. Create `agents/audit-07-newname.md`
+1. Create `agents/audit-0X-newname.md`
 2. Follow the existing persona format
-3. Update orchestrator to spawn 7 agents
+3. Update orchestrator to spawn the new agent
 4. Add new findings file to VERDICT template
+
+---
+
+## 7. Compliance Test Generator
+
+**File**: `agents/compliance-test-generator.md`
+**Mindset**: "A finding is an opinion. A passing test is a fact."
+
+### Purpose
+
+Transforms Phase 1 audit findings into executable pytest tests that run forever in CI.
+
+### Generates Tests For
+
+| Finding Type | Test Class | Checks |
+|--------------|------------|--------|
+| ARCH-* | `TestArchitecturalCompliance` | Imports, layers, naming, schema sync |
+| SEC-* | `TestSecurityCompliance` | RLS, tenant isolation, role management |
+| DEVOPS-* | `TestBuildCompliance` | Dependencies, registration, env vars |
+| KRAKEN-* | `TestConcurrencyCompliance` | Connection pools, blocking I/O |
+| OPS-* | `TestObservabilityCompliance` | Logging, error handling |
+| TEST-* | `TestCoverageCompliance` | Test counts, fixtures |
+
+### Required Input
+
+All 6 Phase 1 findings files in the audit directory:
+- ARCH-findings.md
+- DEVOPS-findings.md
+- SEC-findings.md
+- KRAKEN-findings.md
+- OPS-findings.md
+- TEST-findings.md
+
+### Output
+
+```
+tests/compliance/test_{wo_name}_compliance.py
+```
+
+### Sample Generated Test
+
+```python
+class TestSecurityCompliance:
+    """
+    LAW: SESSION-AND-TENANT-LAW.md §Rule 4
+    FINDING: SEC-002 - SET ROLE must have RESET ROLE
+    """
+
+    def test_all_set_role_have_reset_role(self):
+        """Every SET ROLE must have corresponding RESET ROLE."""
+        violations = []
+        for py_file in Path("src").rglob("*.py"):
+            content = py_file.read_text()
+            if content.count("SET ROLE") > content.count("RESET ROLE"):
+                violations.append(str(py_file))
+
+        assert violations == [], f"Role leak: {violations}"
+```
+
+### Invocation
+
+Drag `compliance-test-orchestrator.md` **from the audit folder** into chat after implementation is complete.
+
+---
+
+## The Two-Phase Workflow
+
+```
+PHASE 1: ADVERSARIAL AUDIT
+┌────────────────────────────────────────────┐
+│  Work Order → 6 Auditors → Findings        │
+│  Output: "Here's what's wrong"             │
+└────────────────────────────────────────────┘
+                    ↓
+          [Developer fixes issues]
+                    ↓
+PHASE 2: COMPLIANCE TESTS
+┌────────────────────────────────────────────┐
+│  Findings → Test Generator → pytest suite  │
+│  Output: "Here's how to prove it's fixed"  │
+└────────────────────────────────────────────┘
+                    ↓
+CONTINUOUS: CI/CD
+┌────────────────────────────────────────────┐
+│  pytest tests/compliance/ → Pass/Fail      │
+│  Output: "It stays fixed forever"          │
+└────────────────────────────────────────────┘
+```
