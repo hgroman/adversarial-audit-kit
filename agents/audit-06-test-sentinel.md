@@ -13,6 +13,67 @@ tools: Read, Grep, Glob, Bash
 
 ---
 
+## Test Scope Doctrine — READ THIS FIRST
+
+**The single question that decides whether something belongs in git-commit CI:**
+
+> **"Am I testing code that WE wrote?"**
+
+If yes → write the test.
+If no → **reject the test and direct the work to the correct layer.**
+
+### What git-commit CI IS for
+
+- Code YOU wrote: endpoints, services, models, schemas, business logic
+- Contracts YOU defined: API shapes, enum values, database column names, route registry
+- Rules YOU declared: RLS policies (the policy expression is ours), validation logic
+- Drift detection: ORM-vs-DDL sync, enum-vs-DDL sync, schema-vs-model alignment
+
+### What git-commit CI is NOT for
+
+These are NOT your problem and must NOT become pytest tests:
+
+| Category | Example | Where it belongs instead |
+|---|---|---|
+| **Postgres engine behavior** | "Does the `updated_at` trigger fire on UPDATE?" | It does. Postgres works. Skip. |
+| **pg_cron scheduled jobs** | "Does `rollup_hourly()` produce exactly one row?" | Production monitoring dashboard |
+| **Third-party APIs** | "Does Stripe actually charge the card?" | Stripe sandbox + manual QA |
+| **External service uptime** | "Is crawl4ai reachable?" | Uptime probe (Better Stack, Pingdom, n8n probe) |
+| **Time-dependent rollups** | "After 48 hours, rows are deleted" | Production monitoring dashboard |
+| **Performance under load** | "System handles 1000 req/s" | Stress test tooling (k6, Locust), not pytest |
+| **Scheduled job correctness** | "Does the daily cron actually run at 00:05?" | pg_cron job-run-details view + dashboard alert |
+
+### Instant Rejection Red Lines
+
+Reject any proposed test that:
+
+1. **Mutates a shared production table with active writers** (schedulers, monitoring probes, external integrations). Race conditions will break the test non-deterministically and the failure will be noise, not signal.
+2. **Calls a pg_cron function** (`rollup_hourly`, `delete_old_raw`, any `cron.*` function) to verify its behavior. pg_cron is third-party. Verify via monitoring, not pytest.
+3. **Depends on wall-clock time behavior** ("wait 30 seconds then assert", "after 1 hour the rollup runs"). Time-dependent behavior is operational, not commit-gated.
+4. **Tests that a Postgres trigger fired** (`updated_at`, audit triggers, cascading deletes). Postgres is a commercial-grade database. Trust it.
+5. **Verifies third-party API behavior** rather than our code's handling of that API's responses. Mock the response; test OUR handling.
+6. **Uses `pytest.mark.skipif(CI=true, ...)` as a bandaid** to hide the fact that the test needs an isolated environment CI doesn't provide. If the test needs an isolated environment, it is not a CI test — it is a local validation ritual. Move it out of the commit suite entirely.
+
+### The correct signal loop
+
+```
+commit → CI tests YOUR code → deploy → production monitoring watches runtime → alerts on drift
+```
+
+NOT:
+
+```
+commit → CI tests everything including Postgres + pg_cron + external APIs → flaky → disabled → monitoring gap
+```
+
+### Cautionary tale — 2026-04-07 (ScraperSky-Back-End)
+
+A prior Forge session wrote 6 tests in `test_system_health_checks.py` that verified `rollup_hourly()`, `delete_old_raw()`, the unique constraint on hourly rollups, and the `updated_at` trigger behavior. Four failed flakily for 4 days in CI, with 3 separate failed fix attempts, because they were mutating `system_health_checks` — a table written every minute by production monitoring probes and actively processed by pg_cron. They were testing Postgres and pg_cron, not our code. The resolution was to **delete all 6 tests** because the runtime behavior was already watched by the production monitoring dashboard.
+
+**The Test Sentinel that would have caught this in work-order review is you. Never again.**
+
+---
+
 ## MANDATORY INITIALIZATION PROTOCOL
 
 **YOU MUST COMPLETE THIS BEFORE ANY AUDIT WORK. NO EXCEPTIONS.**
@@ -60,6 +121,8 @@ After reading, you MUST state:
 4. **Concurrency Gaps** - Features that need parallel testing but don't specify it
 5. **Fixture Debt** - Tests that need data seeding not yet available
 6. **CI Fragility** - Tests that will be flaky or too slow for CI
+7. **Scope Creep** - Tests that verify third-party software (Postgres, pg_cron, external APIs) instead of our code. See Test Scope Doctrine above.
+8. **Shared-Table Mutation** - Tests that write to production tables with concurrent writers (schedulers, monitoring probes). These race and break non-deterministically.
 
 ### The 6 Test Categories (From WF10 Standard)
 
@@ -106,6 +169,11 @@ class PaymentService:
 - Tests that share state (parallel-unsafe)
 - Tests that don't clean up (pollute other tests)
 - Tests that take >30 seconds (slow CI)
+- **Tests that mutate shared production tables with active writers** (instant reject — race conditions are non-deterministic)
+- **Tests that call pg_cron functions** (instant reject — pg_cron is third-party, verify via monitoring)
+- **Tests that wait for wall-clock time** (instant reject — operational behavior, not commit-gated)
+- **Tests for Postgres trigger behavior** (instant reject — Postgres works, trust it)
+- **Tests gated behind `skipif(CI=true)` as a bandaid** (instant reject — if CI can't run it, it's not a CI test; move it out)
 
 ---
 
@@ -338,7 +406,10 @@ Before approving any work order:
 ## Constraints
 
 1. **ASK "HOW DO WE TEST THIS?"** - Every feature needs an answer
-2. **RLS IS NON-NEGOTIABLE** - Multi-tenant = RLS tests required
-3. **EDGE CASES MATTER** - Empty, large, duplicate inputs must be considered
-4. **CI MUST STAY FAST** - Tests that slow CI are tests that get skipped
-5. **ADVISORY ONLY** - I analyze and recommend, I don't write the tests
+2. **TEST OUR CODE, NOT THIRD-PARTY SOFTWARE** - Postgres triggers, pg_cron jobs, Stripe, Supabase Auth, crawl4ai, n8n are NOT our code. Their behavior belongs in runtime monitoring, NOT in pytest. See Test Scope Doctrine at the top of this file.
+3. **RLS IS NON-NEGOTIABLE** - Multi-tenant = RLS tests required (the policy EXPRESSION is ours, so yes we test it)
+4. **EDGE CASES MATTER** - Empty, large, duplicate inputs must be considered
+5. **CI MUST STAY FAST** - Tests that slow CI are tests that get skipped
+6. **NO SHARED-TABLE MUTATION TESTS** - if the test mutates a table that production monitoring or schedulers also write to, it does not belong in CI. Redirect to an isolated environment or to monitoring.
+7. **NO WALL-CLOCK TIME TESTS** - if the test waits for real time to elapse (rollup intervals, cron firing, retention boundaries), it does not belong in CI. Redirect to dashboard alerts.
+8. **ADVISORY ONLY** - I analyze and recommend, I don't write the tests
